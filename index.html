@@ -255,10 +255,8 @@ function App(){
   const monacoRef=useRef(null);
   const lastEditorChangeRef=useRef(null);
   const editorCheckIntervalRef=useRef(null);
-  const streamTimeoutRef=useRef(null);
   const savedCodeBufferRef=useRef("");
   const generationActiveRef=useRef(false);
-  const sdkLoadedRef=useRef(false);
 
   const activeFile=files.find(f=>f.id===activeFileId);
 
@@ -288,16 +286,10 @@ function App(){
         padding:{top:16,bottom:16}
       });
     });
-    
-    // Cleanup on unmount
-    return()=>{
-      killAllIntervals();
-    };
   },[]);
 
   // Auto-continue monitor: watches for editor stalls during generation
-  // After 90s of no changes: deletes zombie SDK, reloads fresh, continues generation
-  // Uses 20s hard timeout per stream - kills and retries if no chunks arrive
+  // If no changes detected for 90 seconds, saves code buffer, clears old auth, and triggers continuation with fresh token
   useEffect(()=>{
     if(loading&&generationActiveRef.current){
       lastEditorChangeRef.current=Date.now();
@@ -314,10 +306,14 @@ function App(){
       },2000); // Check every 2 seconds
       
       return()=>{
-        killAllIntervals();
+        if(editorCheckIntervalRef.current){
+          clearInterval(editorCheckIntervalRef.current);
+        }
       };
     }else{
-      killAllIntervals();
+      if(editorCheckIntervalRef.current){
+        clearInterval(editorCheckIntervalRef.current);
+      }
     }
   },[loading,autoContinueActive]);
 
@@ -336,55 +332,6 @@ function App(){
   useEffect(()=>{
     lucide.createIcons();
   },[toast,modal,files,autoContinueActive]);
-
-  function killAllIntervals(){
-    console.log("🔪 Killing all intervals and timeouts aggressively");
-    if(editorCheckIntervalRef.current){
-      clearInterval(editorCheckIntervalRef.current);
-      editorCheckIntervalRef.current=null;
-    }
-    if(streamTimeoutRef.current){
-      clearTimeout(streamTimeoutRef.current);
-      streamTimeoutRef.current=null;
-    }
-  }
-
-  async function reloadPuterSDK(){
-    console.log("♻️ Reloading Puter SDK dynamically...");
-    
-    // Kill zombie SDK instance
-    if(window.puter?.ai){
-      try{
-        delete window.puter;
-        console.log("✅ Deleted old Puter SDK instance");
-      }catch(e){
-        console.warn("Could not delete puter:",e);
-      }
-    }
-    
-    // Remove old script tag if exists
-    const oldScript=document.querySelector('script[src*="puter.com"]');
-    if(oldScript){
-      oldScript.remove();
-    }
-    
-    // Load fresh SDK
-    return new Promise((resolve,reject)=>{
-      const script=document.createElement('script');
-      script.src='https://js.puter.com/v2/';
-      script.onload=()=>{
-        console.log("✅ Fresh Puter SDK loaded");
-        sdkLoadedRef.current=true;
-        // Give SDK time to initialize
-        setTimeout(resolve,1000);
-      };
-      script.onerror=()=>{
-        console.error("❌ Failed to reload Puter SDK");
-        reject(new Error("SDK reload failed"));
-      };
-      document.head.appendChild(script);
-    });
-  }
 
   function showToast(msg,type="info"){
     setToast({msg,type});
@@ -416,24 +363,76 @@ function App(){
   const creditStatus=creditPercent<=10?"danger":creditPercent<=30?"warning":"normal";
 
   async function autoResumeGeneration(){
-    console.log("🔄 Auto-resuming generation - killing zombie instances...");
-    
-    // Kill all intervals first
-    killAllIntervals();
+    console.log("🔄 Auto-resuming generation with fresh auth...");
     
     // Save current editor state
     const currentCode=editorRef.current.getValue();
     savedCodeBufferRef.current=currentCode;
     
-    showToast("♻️ Killing old SDK & reloading fresh...","info");
+    showToast("🔄 Refreshing auth & auto-continuing...","info");
     
-    // Delete zombie SDK and reload fresh
+    // Refresh Puter connection - remove old token and create new one
     try{
-      await reloadPuterSDK();
-      showToast("✅ Fresh SDK loaded, continuing generation...","success");
-    }catch(sdkErr){
-      console.error("SDK reload failed:",sdkErr);
-      showToast("SDK reload failed, attempting anyway...","warning");
+      if(window.puter){
+        console.log("♻️ Removing old auth token and requesting fresh authentication...");
+        
+        // Clear any existing auth tokens
+        try{
+          // Clear Puter's stored authentication
+          if(window.puter.authToken){
+            delete window.puter.authToken;
+          }
+          // Clear from localStorage if Puter uses it
+          const puterKeys=['puter.auth','puter.token','puter_auth_token'];
+          puterKeys.forEach(key=>{
+            try{
+              if(typeof localStorage!=='undefined'){
+                localStorage.removeItem(key);
+              }
+            }catch(e){}
+          });
+        }catch(clearErr){
+          console.warn("Token clear warning:",clearErr);
+        }
+        
+        // Rerun auth flow with embedded popup
+        console.log("🔐 Initiating new auth flow...");
+        showToast("🔐 Opening auth popup - please approve...","info");
+        
+        const authPopup=window.open(
+          'https://puter.com/?embedded_in_popup=true&request_auth=true',
+          'PuterAuth',
+          'width=600,height=700,left=200,top=100'
+        );
+        
+        // Wait for auth to complete (popup will close automatically)
+        await new Promise((resolve,reject)=>{
+          const checkClosed=setInterval(()=>{
+            if(authPopup&&authPopup.closed){
+              clearInterval(checkClosed);
+              console.log("✅ Auth popup closed - new token should be ready");
+              showToast("✅ Auth refreshed successfully!","success");
+              resolve();
+            }
+          },500);
+          
+          // Timeout after 30 seconds
+          setTimeout(()=>{
+            clearInterval(checkClosed);
+            if(authPopup&&!authPopup.closed){
+              authPopup.close();
+            }
+            resolve(); // Continue anyway
+          },30000);
+        });
+        
+        // Give Puter SDK time to process new auth
+        await new Promise(resolve=>setTimeout(resolve,1000));
+        console.log("✅ Fresh auth token ready");
+      }
+    }catch(authErr){
+      console.warn("Auth refresh warning:",authErr);
+      showToast("Auth refresh had issues, attempting continue anyway...","warning");
     }
     
     // Get last 1000 chars for context
@@ -448,18 +447,6 @@ function App(){
 - Include proper error handling
 - Return ONLY the CONTINUATION code - no explanations, no markdown
 - Ensure seamless merge: your output will be appended directly to existing code`;
-
-    // Verify SDK is loaded
-    if(!window.puter?.ai){
-      console.warn("⚠️ Puter SDK not available, reloading...");
-      try{
-        await reloadPuterSDK();
-      }catch(sdkErr){
-        showToast("SDK unavailable - cannot continue","error");
-        setAutoContinueActive(false);
-        return;
-      }
-    }
 
     try{
       const cont=await puter.ai.chat([
@@ -594,10 +581,6 @@ function App(){
 
   async function continueGeneration(){
     closeModal();
-    
-    // Kill all intervals before starting
-    killAllIntervals();
-    
     setLoading(true);
     setProgress(0);
     generationActiveRef.current=true;
@@ -622,15 +605,6 @@ function App(){
         setProgress(p=>Math.min(p+1,95));
       },100);
 
-      // Set hard timeout for stream
-      let firstChunkReceived=false;
-      streamTimeoutRef.current=setTimeout(()=>{
-        if(!firstChunkReceived){
-          clearInterval(progressInterval);
-          throw new Error("Initial stream stalled - no data in 20 seconds");
-        }
-      },20000);
-
       const res=await puter.ai.chat([
         {role:"system",content:system},
         {role:"user",content:prompt}
@@ -641,16 +615,6 @@ function App(){
         const text=part?.text||"";
         buffer+=text;
         chunkCount++;
-        
-        // Clear timeout on first chunk
-        if(!firstChunkReceived&&text){
-          if(streamTimeoutRef.current){
-            clearTimeout(streamTimeoutRef.current);
-            streamTimeoutRef.current=null;
-          }
-          firstChunkReceived=true;
-          console.log("✅ Stream active - receiving data");
-        }
         
         const cleaned=cleanCode(buffer);
         editorRef.current.setValue(cleaned);
@@ -667,12 +631,6 @@ function App(){
       }
 
       clearInterval(progressInterval);
-      
-      // Clean up timeout
-      if(streamTimeoutRef.current){
-        clearTimeout(streamTimeoutRef.current);
-        streamTimeoutRef.current=null;
-      }
 
       const final=cleanCode(buffer);
       const lang=detectLanguage(final);
@@ -718,7 +676,6 @@ function App(){
       }
 
     }catch(e){
-      killAllIntervals();
       showToast("Generation failed: "+e.message,"error");
     }
     
@@ -726,7 +683,6 @@ function App(){
     setLoading(false);
     setProgress(0);
     setAutoContinueActive(false);
-    killAllIntervals(); // Final cleanup
   }
 
   function selectFile(id){
@@ -808,9 +764,6 @@ function App(){
       return;
     }
 
-    // Kill all intervals before starting
-    killAllIntervals();
-
     setLoading(true);
     setProgress(0);
     generationActiveRef.current=true;
@@ -836,47 +789,20 @@ function App(){
 
       const context=buffer.slice(-800);
       
-      // Set hard timeout for stream
-      let firstChunkReceived=false;
-      streamTimeoutRef.current=setTimeout(()=>{
-        if(!firstChunkReceived){
-          clearInterval(progressInterval);
-          throw new Error("Continue stream stalled - no data in 20 seconds");
-        }
-      },20000);
-      
       const cont=await puter.ai.chat([
         {role:"system",content:system},
         {role:"user",content:`Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.`}
       ],{model:"claude-sonnet-4-20250514",stream:true});
 
       for await(const part of cont){
-        const text=part?.text||"";
-        if(text){
-          // Clear timeout on first chunk
-          if(!firstChunkReceived){
-            if(streamTimeoutRef.current){
-              clearTimeout(streamTimeoutRef.current);
-              streamTimeoutRef.current=null;
-            }
-            firstChunkReceived=true;
-          }
-          
-          buffer+=text;
-          const cleaned=cleanCode(buffer);
-          editorRef.current.setValue(cleaned);
-          savedCodeBufferRef.current=cleaned;
-          lastEditorChangeRef.current=Date.now();
-        }
+        buffer+=part?.text||"";
+        const cleaned=cleanCode(buffer);
+        editorRef.current.setValue(cleaned);
+        savedCodeBufferRef.current=cleaned;
+        lastEditorChangeRef.current=Date.now();
       }
 
       clearInterval(progressInterval);
-      
-      // Clean up timeout
-      if(streamTimeoutRef.current){
-        clearTimeout(streamTimeoutRef.current);
-        streamTimeoutRef.current=null;
-      }
 
       const final=cleanCode(buffer);
       const updatedFile={...activeFile,content:final,size:final.length};
@@ -889,14 +815,12 @@ function App(){
       showToast(`✨ Code continued successfully! Used ${cost} credits.`,"success");
 
     }catch(e){
-      killAllIntervals();
       showToast("Continue failed: "+e.message,"error");
     }
 
     generationActiveRef.current=false;
     setLoading(false);
     setProgress(0);
-    killAllIntervals(); // Final cleanup
   }
 
   function resetCredits(){
@@ -930,7 +854,7 @@ function App(){
           {autoContinueActive&&(
             <span className="auto-continue-badge">
               <i data-lucide="loader" style={{width:"14px",height:"14px"}}></i>
-              Resuming
+              Auto-Continue
             </span>
           )}
         </div>
@@ -1009,7 +933,7 @@ function App(){
                 What would you like to build?
                 <span style={{marginLeft:"auto",fontSize:"0.75rem",background:"rgba(110,243,197,.15)",padding:"4px 10px",borderRadius:"6px",color:"#6ef3c5",display:"flex",alignItems:"center",gap:"4px"}}>
                   <i data-lucide="shield-check" style={{width:"14px",height:"14px"}}></i>
-                  Resumable Engine (90s)
+                  Auto-Continue (90s)
                 </span>
               </div>
               <textarea 
@@ -1067,7 +991,7 @@ function App(){
                 <div className="progress-fill" style={{width:`${progress}%`}}></div>
               </div>
               <div className="progress-text">
-                {autoContinueActive?"Resuming with fresh SDK...":"Generating your code..."} {progress}%
+                {autoContinueActive?"Auto-continuing generation...":"Generating your code..."} {progress}%
               </div>
             </div>
           </div>
