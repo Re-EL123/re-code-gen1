@@ -6,19 +6,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <!-- React + Babel -->
-<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-<!-- Puter AI -->
-<script src="https://js.puter.com/v2/"></script>
 
 <!-- Lucide Icons -->
 <script src="https://unpkg.com/lucide@latest"></script>
-
-<!-- Monaco Editor -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.43.0/min/vs/editor/editor.main.css" />
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.43.0/min/vs/loader.js"></script>
 
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -75,7 +68,7 @@ textarea::placeholder{color:#64748b}
 .auto-name-btn:hover{background:rgba(110,243,197,.2);transform:scale(1.02)}
 
 /* Token Estimation */
-.token-estimate{display:flex;align-items:center;gap:12px;margin-top:12px;padding:12px 16px;background:rgba(110,243,197,.05);border-radius:12px;border:1px solid rgba(110,243,197,.15);font-size:0.9rem;color:#94a3b8}
+.token-estimate{display:flex;align-items:center;gap:12px;margin-top:12px;padding:12px 16px;background:rgba(110,243,197,.05);border-radius:12px;border:1px solid rgba(110,243,197,.15);font-size:0.9rem;color:#94a3b8;flex-wrap:wrap}
 .token-estimate i{color:#6ef3c5}
 .token-cost{font-weight:700;color:#6ef3c5}
 
@@ -99,15 +92,18 @@ button span{z-index:1}
 .progress-fill{height:100%;background:linear-gradient(90deg,#6ef3c5,#4ade80,#6ef3c5);background-size:200% 100%;animation:progressShimmer 2s linear infinite;transition:width 0.3s}
 .progress-text{margin-top:8px;font-size:0.85rem;color:#94a3b8;text-align:center}
 
-/* Editor Container */
+/* Code Editor */
 .editor-container{background:rgba(255,255,255,.06);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.3);animation:fadeIn 0.8s ease}
-.editor-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.editor-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px}
 .editor-title{display:flex;align-items:center;gap:8px;font-weight:700;color:#6ef3c5;font-size:1.1rem}
-.editor-actions{display:flex;gap:8px}
+.editor-actions{display:flex;gap:8px;align-items:center}
 .icon-btn{padding:10px;border:none;background:rgba(110,243,197,.1);border-radius:10px;cursor:pointer;transition:all 0.3s;color:#6ef3c5;display:flex;align-items:center;justify-content:center}
 .icon-btn:hover{background:rgba(110,243,197,.2);transform:scale(1.05)}
 .icon-btn:disabled{opacity:.5;cursor:not-allowed}
-#editor{height:500px;border-radius:16px;border:2px solid #1e293b;overflow:hidden;box-shadow:inset 0 2px 8px rgba(0,0,0,.3)}
+
+.code-editor-wrapper{position:relative;border-radius:16px;border:2px solid #1e293b;overflow:hidden;background:#1e1e1e}
+.code-editor{width:100%;min-height:500px;max-height:600px;background:#1e1e1e;color:#d4d4d4;border:none;padding:20px;font-size:14px;line-height:1.6;font-family:'Fira Code','Cascadia Code',Consolas,monospace;resize:vertical;overflow-y:auto;white-space:pre;tab-size:2}
+.code-editor:focus{outline:none}
 
 /* Stats */
 .stats{display:flex;gap:24px;margin-top:16px;padding:16px;background:rgba(2,6,23,.6);border-radius:12px;border:1px solid #1e293b;flex-wrap:wrap}
@@ -156,7 +152,7 @@ button span{z-index:1}
   .actions{flex-direction:column}
   button{width:100%;justify-content:center}
   .stats{flex-direction:column;gap:12px}
-  #editor{height:400px}
+  .code-editor{min-height:400px}
 }
 </style>
 </head>
@@ -166,26 +162,77 @@ button span{z-index:1}
 <script type="text/babel">
 const {useState,useEffect,useRef}=React;
 
-// Storage Manager (uses in-memory but structured for easy localStorage conversion)
+// API Configuration
+const API_KEY = 'vck_7xlFsvQn84Rrl8IwC70QtiKsDDiK6e4WEZRq5xy3LVm0n4Z7WT2RCqug';
+const API_BASE_URL = 'https://ai-gateway.vercel.sh';
+const MODEL = 'anthropic/claude-sonnet-4.5';
+
+// Storage Manager
 const storage={
   data:{files:[],credits:1000,activeFileId:null},
-  save(){
-    // In-memory storage (persists during browser session)
-    // To enable localStorage, uncomment:
-    // localStorage.setItem('reCodeSession',JSON.stringify(this.data));
-  },
-  load(){
-    // To enable localStorage, uncomment:
-    // const saved=localStorage.getItem('reCodeSession');
-    // if(saved) this.data=JSON.parse(saved);
-  }
+  save(){},
+  load(){}
 };
+
+// Direct API call to Anthropic via Vercel Gateway
+async function callAnthropicAPI(messages, system, maxTokens = 4000) {
+  const response = await fetch(`${API_BASE_URL}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: maxTokens,
+      system: system,
+      messages: messages,
+      stream: true
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`API Error: ${response.status} ${response.statusText}`);
+  }
+
+  return response;
+}
+
+// Parse streaming response
+async function* parseStream(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        if (data === '[DONE]') return;
+        
+        try {
+          const parsed = JSON.parse(data);
+          yield parsed;
+        } catch (e) {
+          // Skip invalid JSON
+        }
+      }
+    }
+  }
+}
 
 function cleanCode(raw){
   return raw
     .replace(/```[\s\S]*?```/g,m=>m.replace(/```[\w]*\n?|```/g,""))
     .replace(/```/g,"")
-    // Remove AI explanations that leak into code
     .replace(/I don't see any previous code.*$/s,'')
     .replace(/Could you please share.*$/s,'')
     .replace(/I'll continue.*$/s,'')
@@ -217,7 +264,6 @@ function generateSmartFilename(prompt,code,lang){
   };
   const ext=extensions[lang]||"txt";
   
-  // Extract class/function names
   let name=mainKeyword;
   if(lang==="javascript"||lang==="typescript"){
     const match=code.match(/(?:class|function|const)\s+(\w+)/);
@@ -238,7 +284,6 @@ function estimateTokens(text){
 }
 
 function estimateCost(tokens){
-  // More generous: ~50 tokens per credit (200 chars per credit)
   return Math.ceil(tokens/50);
 }
 
@@ -253,8 +298,7 @@ function App(){
   const [progress,setProgress]=useState(0);
   const [files,setFiles]=useState([]);
   const [activeFileId,setActiveFileId]=useState(null);
-  const editorRef=useRef(null);
-  const monacoRef=useRef(null);
+  const [editorContent,setEditorContent]=useState("// Your generated code will appear here\n// Start by entering a prompt and clicking Generate!");
 
   const activeFile=files.find(f=>f.id===activeFileId);
 
@@ -269,27 +313,11 @@ function App(){
     }
     
     lucide.createIcons();
-    require.config({paths:{vs:"https://cdn.jsdelivr.net/npm/monaco-editor@0.43.0/min/vs"}});
-    require(["vs/editor/editor.main"],(monaco)=>{
-      monacoRef.current=monaco;
-      editorRef.current=monaco.editor.create(document.getElementById("editor"),{
-        value:"// Your generated code will appear here\n// Start by entering a prompt and clicking Generate!",
-        language:"plaintext",
-        theme:"vs-dark",
-        automaticLayout:true,
-        minimap:{enabled:false},
-        fontSize:14,
-        lineHeight:22,
-        fontFamily:"'Fira Code', 'Cascadia Code', Consolas, monospace",
-        padding:{top:16,bottom:16}
-      });
-    });
   },[]);
 
   useEffect(()=>{
-    if(activeFile&&editorRef.current){
-      editorRef.current.setValue(activeFile.content);
-      monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),activeFile.language);
+    if(activeFile){
+      setEditorContent(activeFile.content);
     }
   },[activeFileId,activeFile]);
 
@@ -297,6 +325,10 @@ function App(){
     storage.data={files,credits,activeFileId};
     storage.save();
   },[files,credits,activeFileId]);
+
+  useEffect(()=>{
+    lucide.createIcons();
+  },[toast,modal,files]);
 
   function showToast(msg,type="info"){
     setToast({msg,type});
@@ -316,9 +348,8 @@ function App(){
       showToast("Enter a prompt first","warning");
       return;
     }
-    const tempCode=editorRef.current.getValue();
-    const lang=detectLanguage(tempCode);
-    const name=generateSmartFilename(prompt,tempCode,lang);
+    const lang=detectLanguage(editorContent);
+    const name=generateSmartFilename(prompt,editorContent,lang);
     setFilename(name);
     showToast("Filename generated!","success");
   }
@@ -389,59 +420,65 @@ function App(){
         setProgress(p=>Math.min(p+1,95));
       },100);
 
-      const res=await puter.ai.chat([
-        {role:"system",content:system},
-        {role:"user",content:prompt}
-      ],{model:"claude-sonnet-4-20250514",stream:true});
+      const response = await callAnthropicAPI(
+        [{ role: 'user', content: prompt }],
+        system,
+        4000
+      );
 
       let chunkCount=0;
-      for await(const part of res){
-        const text=part?.text||"";
-        buffer+=text;
-        chunkCount++;
-        
-        const cleaned=cleanCode(buffer);
-        editorRef.current.setValue(cleaned);
+      for await(const event of parseStream(response)){
+        if(event.type==='content_block_delta'){
+          if(event.delta?.type==='text_delta'){
+            const text=event.delta.text||"";
+            buffer+=text;
+            chunkCount++;
+            
+            const cleaned=cleanCode(buffer);
+            setEditorContent(cleaned);
 
-        if(chunkCount%10===0){
-          const currentCost=Math.ceil(cleaned.length/200); // More generous
-          if(credits-currentCost<=0){
-            showToast("Credits exhausted during generation!","warning");
-            break;
+            if(chunkCount%10===0){
+              const currentCost=Math.ceil(cleaned.length/200);
+              if(credits-currentCost<=0){
+                showToast("Credits exhausted during generation!","warning");
+                break;
+              }
+            }
           }
         }
       }
 
       clearInterval(progressInterval);
 
-      // Auto-continue if code seems incomplete
       if(buffer.length>100&&!/[}\);>\]]$/.test(buffer.trim())){
         showToast("Continuing generation...","info");
         
-        const cont=await puter.ai.chat([
-          {role:"system",content:system},
-          {role:"user",content:"Continue the code exactly where you stopped. Complete it fully."}
-        ],{model:"claude-sonnet-4-20250514",stream:true});
+        const contResponse = await callAnthropicAPI(
+          [{ role: 'user', content: "Continue the code exactly where you stopped. Complete it fully." }],
+          system,
+          2000
+        );
 
-        for await(const part of cont){
-          buffer+=part?.text||"";
-          const cleaned=cleanCode(buffer);
-          editorRef.current.setValue(cleaned);
+        for await(const event of parseStream(contResponse)){
+          if(event.type==='content_block_delta'){
+            if(event.delta?.type==='text_delta'){
+              buffer+=event.delta.text||"";
+              const cleaned=cleanCode(buffer);
+              setEditorContent(cleaned);
+            }
+          }
         }
       }
 
       const final=cleanCode(buffer);
       const lang=detectLanguage(final);
-      monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),lang);
 
-      // Auto-generate filename if not provided
       let finalFilename=filename.trim();
       if(!finalFilename){
         finalFilename=generateSmartFilename(prompt,final,lang);
         setFilename(finalFilename);
       }
 
-      // Create new file
       const newFile={
         id:Date.now().toString(),
         name:finalFilename,
@@ -485,10 +522,6 @@ function App(){
 
   function selectFile(id){
     setActiveFileId(id);
-    const file=files.find(f=>f.id===id);
-    if(file){
-      lucide.createIcons();
-    }
   }
 
   function deleteFile(id,e){
@@ -501,8 +534,7 @@ function App(){
         setFiles(prev=>prev.filter(f=>f.id!==id));
         if(activeFileId===id){
           setActiveFileId(null);
-          editorRef.current.setValue("// Select a file or generate new code");
-          monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),"plaintext");
+          setEditorContent("// Select a file or generate new code");
         }
         closeModal();
         showToast("File deleted","info");
@@ -585,18 +617,22 @@ function App(){
         setProgress(p=>Math.min(p+2,95));
       },100);
 
-      // Get last 800 chars for context
       const context=buffer.slice(-800);
       
-      const cont=await puter.ai.chat([
-        {role:"system",content:system},
-        {role:"user",content:`Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.`}
-      ],{model:"claude-sonnet-4-20250514",stream:true});
+      const response = await callAnthropicAPI(
+        [{ role: 'user', content: `Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.` }],
+        system,
+        3000
+      );
 
-      for await(const part of cont){
-        buffer+=part?.text||"";
-        const cleaned=cleanCode(buffer);
-        editorRef.current.setValue(cleaned);
+      for await(const event of parseStream(response)){
+        if(event.type==='content_block_delta'){
+          if(event.delta?.type==='text_delta'){
+            buffer+=event.delta.text||"";
+            const cleaned=cleanCode(buffer);
+            setEditorContent(cleaned);
+          }
+        }
       }
 
       clearInterval(progressInterval);
@@ -605,7 +641,7 @@ function App(){
       const updatedFile={...activeFile,content:final,size:final.length};
       setFiles(prev=>prev.map(f=>f.id===activeFile.id?updatedFile:f));
 
-      const cost=Math.ceil((final.length-activeFile.size)/200); // More generous
+      const cost=Math.ceil((final.length-activeFile.size)/200);
       setCredits(prev=>Math.max(prev-cost,0));
 
       setProgress(100);
@@ -632,8 +668,7 @@ function App(){
       ()=>{
         setFiles([]);
         setActiveFileId(null);
-        editorRef.current.setValue("// All files cleared. Start fresh!");
-        monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),"plaintext");
+        setEditorContent("// All files cleared. Start fresh!");
         closeModal();
         showToast("All files cleared","info");
       }
@@ -798,7 +833,14 @@ function App(){
                 )}
               </div>
             </div>
-            <div id="editor"></div>
+            <div className="code-editor-wrapper">
+              <textarea 
+                className="code-editor"
+                value={editorContent}
+                onChange={e=>setEditorContent(e.target.value)}
+                spellCheck="false"
+              />
+            </div>
             <div className="stats">
               <div className="stat-item">
                 <i data-lucide="files"></i>
