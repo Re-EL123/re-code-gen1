@@ -180,8 +180,7 @@ async function callAnthropicAPI(messages, system, maxTokens = 4000) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01'
+      'Authorization': `Bearer ${API_KEY}`
     },
     body: JSON.stringify({
       model: MODEL,
@@ -193,7 +192,8 @@ async function callAnthropicAPI(messages, system, maxTokens = 4000) {
   });
 
   if (!response.ok) {
-    throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    const errorText = await response.text();
+    throw new Error(`API Error: ${response.status} - ${errorText}`);
   }
 
   return response;
