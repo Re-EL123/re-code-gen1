@@ -622,6 +622,21 @@ function App(){
     setCredits(1000);
     showToast("Credits reset to 1000","success");
   }
+   async function handleSignIn(){
+    try{
+      const isSignedIn=await puter.auth.isSignedIn();
+      if(isSignedIn){
+        await puter.auth.signOut();
+        showToast('Signed out successfully','info');
+      }else{
+        await puter.auth.signIn();
+        showToast('Signed in successfully! Files will now sync to cloud.','success');
+      }
+      lucide.createIcons();
+    }catch(e){
+      showToast('Authentication error: '+e.message,'error');
+    }
+  }
 
   function clearAllFiles(){
     showModal(
@@ -658,6 +673,9 @@ function App(){
           <button className="icon-btn" onClick={resetCredits} title="Reset Credits">
             <i data-lucide="refresh-cw"></i>
           </button>
+           <button className="icon-btn" onClick={handleSignIn} title="Sign In / Cloud Sync">
+    <i data-lucide={puter.auth.isSignedIn() ? "log-out" : "log-in"}></i>
+    </button>
         </div>
       </header>
 
