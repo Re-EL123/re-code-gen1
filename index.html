@@ -388,6 +388,10 @@ function App(){
         setProgress(p=>Math.min(p+1,95));
       },100);
 
+      // Ensure user authentication for AI access
+if(!await puter.auth.isSignedIn()){
+await puter.auth.signIn({attempt_temp_user_creation:true});
+}
       const res=await puter.ai.chat([
         {role:"system",content:system},
         {role:"user",content:prompt}
@@ -421,6 +425,10 @@ function App(){
           {role:"system",content:system},
           {role:"user",content:"Continue the code exactly where you stopped. Complete it fully."}
         ],{model:"claude-sonnet-4-20250514",stream:true});
+        // Ensure authentication before continuing
+if(!await puter.auth.isSignedIn()){
+await puter.auth.signIn({attempt_temp_user_creation:true});
+}
 
         for await(const part of cont){
           buffer+=part?.text||"";
@@ -591,6 +599,10 @@ function App(){
         {role:"system",content:system},
         {role:"user",content:`Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.`}
       ],{model:"claude-sonnet-4-20250514",stream:true});
+      // Ensure authentication for active file continuation
+if(!await puter.auth.isSignedIn()){
+await puter.auth.signIn({attempt_temp_user_creation:true});
+}
 
       for await(const part of cont){
         buffer+=part?.text||"";
