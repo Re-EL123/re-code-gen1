@@ -334,19 +334,6 @@ function App(){
       showToast("Please enter a prompt to generate code","warning");
       return;
     }
-     // Ensure user is authenticated before API calls
- const isSignedIn=await puter.auth.isSignedIn();
- if(!isSignedIn){
-  try{
-    await puter.auth.signIn();
-  }catch(authErr){
-    showToast('Authentication required to use code generation','error');
-    return;
-  }
- }
-
-    const estimatedCost=estimateCost(estimateTokens(prompt));
-    
     if(credits<=0){
       showModal(
         "No Credits Remaining",
@@ -385,19 +372,6 @@ function App(){
     setLoading(true);
     setProgress(0);
      
- // Ensure user is authenticated before proceeding
- const isSignedIn=await puter.auth.isSignedIn();
- if(!isSignedIn){
-  try{
-    await puter.auth.signIn();
-  }catch(authErr){
-    showToast('Authentication required to use code generation','error');
-    setLoading(false);
-    setProgress(0);
-    return;
-  }
- }
-    
     let buffer="";
     const system=`You are an elite code generation expert. Generate production-ready, fully functional code with these requirements:
 - Write complete, working code with NO placeholders or TODOs
@@ -586,19 +560,6 @@ function App(){
       return;
     }
      
- // Ensure authentication for continue operation
- const isSignedIn=await puter.auth.isSignedIn();
- if(!isSignedIn){
-  try{
-    await puter.auth.signIn();
-  }catch(authErr){
-    showToast('Authentication required to continue code','error');
-    setLoading(false);
-    setProgress(0);
-    return;
-  }
- }
-
     if(credits<=0){
       showToast("No credits remaining","error");
       return;
