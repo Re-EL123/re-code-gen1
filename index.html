@@ -106,6 +106,12 @@ button span{z-index:1}
 .icon-btn:disabled{opacity:.5;cursor:not-allowed}
 #editor{height:500px;border-radius:16px;border:2px solid #1e293b;overflow:hidden;box-shadow:inset 0 2px 8px rgba(0,0,0,.3)}
 
+/* Preview Container */
+.preview-container{margin-top:20px;background:rgba(255,255,255,.06);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.3);animation:fadeIn 0.8s ease}
+.preview-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.preview-title{display:flex;align-items:center;gap:8px;font-weight:700;color:#6ef3c5;font-size:1.1rem}
+#preview-frame{width:100%;height:500px;border-radius:16px;border:2px solid #1e293b;background:#fff;box-shadow:inset 0 2px 8px rgba(0,0,0,.3)}
+
 /* Stats */
 .stats{display:flex;gap:24px;margin-top:16px;padding:16px;background:rgba(2,6,23,.6);border-radius:12px;border:1px solid #1e293b;flex-wrap:wrap}
 .stat-item{display:flex;align-items:center;gap:8px;font-size:0.9rem;color:#94a3b8}
@@ -154,6 +160,7 @@ button span{z-index:1}
   button{width:100%;justify-content:center}
   .stats{flex-direction:column;gap:12px}
   #editor{height:400px}
+  #preview-frame{height:400px}
 }
 </style>
 </head>
@@ -163,12 +170,10 @@ button span{z-index:1}
 <script type="text/babel">
 const {useState,useEffect,useRef}=React;
 
-  // At the top of your script, add this helper
 const API_URL = window.location.hostname === 'localhost' || window.location.protocol === 'file:'
-  ? 'https://re-code-gen1.vercel.app/api/generate'  // Your Vercel URL
-  : '/api/generate';  // Relative path when on Vercel
+  ? 'https://re-code-gen1.vercel.app/api/generate'
+  : '/api/generate';
 
-// Storage Manager
 const storage={
   data:{files:[],credits:1000,activeFileId:null},
   save(){
@@ -249,8 +254,10 @@ function App(){
   const [progress,setProgress]=useState(0);
   const [files,setFiles]=useState([]);
   const [activeFileId,setActiveFileId]=useState(null);
+  const [showPreview,setShowPreview]=useState(false);
   const editorRef=useRef(null);
   const monacoRef=useRef(null);
+  const previewRef=useRef(null);
 
   const activeFile=files.find(f=>f.id===activeFileId);
 
@@ -323,50 +330,48 @@ function App(){
   const creditPercent=(credits/maxCredits)*100;
   const creditStatus=creditPercent<=10?"danger":creditPercent<=30?"warning":"normal";
 
-  // ✅ HuggingFace AI Generation (Primary and Only)
   async function generateWithAI(systemPrompt, userPrompt) {
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        prompt: `${systemPrompt}\n\nUser Request: ${userPrompt}`,
-        model: 'deepseek-ai/DeepSeek-V3',
-        maxTokens: 4096
-      })
-    });
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          prompt: `${systemPrompt}\n\nUser Request: ${userPrompt}`,
+          model: 'deepseek-ai/DeepSeek-V3',
+          maxTokens: 4096
+        })
+      });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      
-      if (response.status === 429) {
-        throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        if (response.status === 429) {
+          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+        }
+        if (response.status === 401) {
+          throw new Error('Authentication failed. Please check API configuration.');
+        }
+        if (response.status === 500) {
+          throw new Error(errorData.message || errorData.error || 'Server error. Please try again.');
+        }
+        
+        throw new Error(errorData.error || `API Error: ${response.status}`);
       }
-      if (response.status === 401) {
-        throw new Error('Authentication failed. Please check API configuration.');
-      }
-      if (response.status === 500) {
-        throw new Error(errorData.message || errorData.error || 'Server error. Please try again.');
-      }
-      
-      throw new Error(errorData.error || `API Error: ${response.status}`);
+
+      const data = await response.json();
+      return {
+        code: data.code,
+        model: data.model,
+        usage: data.usage
+      };
+    } catch (error) {
+      console.error('HuggingFace API error:', error);
+      throw error;
     }
-
-    const data = await response.json();
-    return {
-      code: data.code,
-      model: data.model,
-      usage: data.usage
-    };
-  } catch (error) {
-    console.error('HuggingFace API error:', error);
-    throw error;
   }
-}
-
 
   async function generate(){
     if(!prompt.trim()){
@@ -510,6 +515,7 @@ function App(){
           setActiveFileId(null);
           editorRef.current.setValue("// Select a file or generate new code");
           monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),"plaintext");
+          setShowPreview(false);
         }
         closeModal();
         showToast("File deleted","info");
@@ -639,10 +645,47 @@ function App(){
         setActiveFileId(null);
         editorRef.current.setValue("// All files cleared. Start fresh!");
         monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),"plaintext");
+        setShowPreview(false);
         closeModal();
         showToast("All files cleared","info");
       }
     );
+  }
+
+  function runPreview(){
+    if(!activeFile){
+      showToast("No file selected to preview","warning");
+      return;
+    }
+    
+    if(activeFile.language!=="html"&&activeFile.language!=="javascript"){
+      showToast("Preview only works with HTML/JavaScript files","warning");
+      return;
+    }
+
+    setShowPreview(true);
+    
+    setTimeout(()=>{
+      const iframe=previewRef.current;
+      if(iframe){
+        const iframeDoc=iframe.contentDocument||iframe.contentWindow.document;
+        iframeDoc.open();
+        iframeDoc.write(activeFile.content);
+        iframeDoc.close();
+        showToast("Preview loaded successfully!","success");
+        lucide.createIcons();
+      }
+    },100);
+  }
+
+  function refreshPreview(){
+    if(!previewRef.current)return;
+    const iframe=previewRef.current;
+    const iframeDoc=iframe.contentDocument||iframe.contentWindow.document;
+    iframeDoc.open();
+    iframeDoc.write(activeFile.content);
+    iframeDoc.close();
+    showToast("Preview refreshed","info");
   }
 
   return(
@@ -796,9 +839,14 @@ function App(){
                 {activeFile?activeFile.name:"Editor"}
               </div>
               <div className="editor-actions">
+                {activeFile&&(activeFile.language==="html"||activeFile.language==="javascript")&&(
+                  <button className="icon-btn" onClick={runPreview} title="Run Preview">
+                    <i data-lucide="play"></i>
+                  </button>
+                )}
                 {activeFile&&(
-                  <div style={{fontSize:"0.9rem",color:"#94a3b8",marginRight:"12px"}}>
-                    Language: <span style={{color:"#6ef3c5",fontWeight:700}}>{activeFile.language}</span>
+                  <div style={{fontSize:"0.9rem",color:"#94a3b8",marginRight:"12px",display:"flex",alignItems:"center"}}>
+                    Language: <span style={{color:"#6ef3c5",fontWeight:700,marginLeft:"4px"}}>{activeFile.language}</span>
                   </div>
                 )}
               </div>
@@ -831,6 +879,26 @@ function App(){
               </div>
             </div>
           </div>
+
+          {showPreview&&activeFile&&(
+            <div className="preview-container">
+              <div className="preview-header">
+                <div className="preview-title">
+                  <i data-lucide="monitor"></i>
+                  Live Preview - {activeFile.name}
+                </div>
+                <div className="editor-actions">
+                  <button className="icon-btn" onClick={refreshPreview} title="Refresh Preview">
+                    <i data-lucide="refresh-cw"></i>
+                  </button>
+                  <button className="icon-btn" onClick={()=>setShowPreview(false)} title="Close Preview">
+                    <i data-lucide="x"></i>
+                  </button>
+                </div>
+              </div>
+              <iframe ref={previewRef} id="preview-frame"></iframe>
+            </div>
+          )}
         </div>
       </div>
 
