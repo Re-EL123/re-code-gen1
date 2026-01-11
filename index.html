@@ -10,9 +10,6 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-<!-- Puter AI -->
-<script src="https://js.puter.com/v2/"></script>
-
 <!-- Lucide Icons -->
 <script src="https://unpkg.com/lucide@latest"></script>
 
@@ -166,18 +163,15 @@ button span{z-index:1}
 <script type="text/babel">
 const {useState,useEffect,useRef}=React;
 
-// Storage Manager (uses in-memory but structured for easy localStorage conversion)
+// Storage Manager
 const storage={
   data:{files:[],credits:1000,activeFileId:null},
   save(){
-    // In-memory storage (persists during browser session)
-    // To enable localStorage, uncomment:
-    // localStorage.setItem('reCodeSession',JSON.stringify(this.data));
+    localStorage.setItem('reCodeSession',JSON.stringify(this.data));
   },
   load(){
-    // To enable localStorage, uncomment:
-    // const saved=localStorage.getItem('reCodeSession');
-    // if(saved) this.data=JSON.parse(saved);
+    const saved=localStorage.getItem('reCodeSession');
+    if(saved) this.data=JSON.parse(saved);
   }
 };
 
@@ -324,64 +318,44 @@ function App(){
   const creditPercent=(credits/maxCredits)*100;
   const creditStatus=creditPercent<=10?"danger":creditPercent<=30?"warning":"normal";
 
-  // ✅ NEW: AI Generation with HuggingFace Fallback
-  async function generateWithAI(systemPrompt,userPrompt,isStreaming=true){
+  // ✅ HuggingFace AI Generation (Primary and Only)
+  async function generateWithAI(systemPrompt,userPrompt){
     try{
-      // Try Puter.js (Primary - Claude Sonnet 4)
-      if(!await puter.auth.isSignedIn()){
-        await puter.auth.signIn({attempt_temp_user_creation:true});
-      }
+      const response=await fetch('/api/generate',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          prompt:`${systemPrompt}\n\nUser Request: ${userPrompt}`,
+          model:'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
+          maxTokens:4096
+        })
+      });
 
-      const messages=[
-        {role:"system",content:systemPrompt},
-        {role:"user",content:userPrompt}
-      ];
-
-      if(isStreaming){
-        return await puter.ai.chat(messages,{
-          model:"claude-sonnet-4-20250514",
-          stream:true
-        });
-      }else{
-        const response=await puter.ai.chat(messages,{
-          model:"claude-sonnet-4-20250514",
-          stream:false
-        });
-        return response;
-      }
-    }catch(puterError){
-      console.warn('Puter.js failed, switching to HuggingFace fallback...',puterError);
-      showToast('Primary AI unavailable, using backup system...','warning');
-
-      // Fallback to HuggingFace
-      try{
-        const response=await fetch('/api/generate',{
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({
-            prompt:`${systemPrompt}\n\nUser Request: ${userPrompt}`,
-            model:'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
-            maxTokens:4096
-          })
-        });
-
-        if(!response.ok){
-          const errorData=await response.json().catch(()=>({}));
-          throw new Error(errorData.error||`API Error: ${response.status}`);
-        }
-
-        const data=await response.json();
+      if(!response.ok){
+        const errorData=await response.json().catch(()=>({}));
         
-        // Convert HF response to stream-like format for consistency
-        return{
-          code:data.code,
-          isHuggingFace:true,
-          usage:data.usage
-        };
-      }catch(hfError){
-        console.error('HuggingFace fallback also failed:',hfError);
-        throw new Error('Both AI systems are currently unavailable. Please try again later.');
+        if(response.status===429){
+          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+        }
+        if(response.status===401){
+          throw new Error('Authentication failed. Please check API configuration.');
+        }
+        if(response.status===500){
+          throw new Error(errorData.error||'Server error. Please try again.');
+        }
+        
+        throw new Error(errorData.error||`API Error: ${response.status}`);
       }
+
+      const data=await response.json();
+      return {
+        code:data.code,
+        model:data.model,
+        usage:data.usage
+      };
+    }catch(error){
+      console.error('HuggingFace API error:',error);
+      throw error;
     }
   }
 
@@ -441,61 +415,21 @@ function App(){
 
     try{
       const progressInterval=setInterval(()=>{
-        setProgress(p=>Math.min(p+1,95));
-      },100);
+        setProgress(p=>Math.min(p+2,90));
+      },150);
 
-      const aiResponse=await generateWithAI(systemPrompt,prompt,true);
+      showToast("Generating code with DeepSeek Coder...","info");
 
-      // ✅ Handle HuggingFace non-streaming response
-      if(aiResponse.isHuggingFace){
-        buffer=aiResponse.code;
-        const cleaned=cleanCode(buffer);
-        editorRef.current.setValue(cleaned);
-        clearInterval(progressInterval);
-      }else{
-        // ✅ Handle Puter streaming response
-        let chunkCount=0;
-        for await(const part of aiResponse){
-          const text=part?.text||"";
-          buffer+=text;
-          chunkCount++;
-          
-          const cleaned=cleanCode(buffer);
-          editorRef.current.setValue(cleaned);
+      const aiResponse=await generateWithAI(systemPrompt,prompt);
 
-          if(chunkCount%10===0){
-            const currentCost=Math.ceil(cleaned.length/200);
-            if(credits-currentCost<=0){
-              showToast("Credits exhausted during generation!","warning");
-              break;
-            }
-          }
-        }
-        clearInterval(progressInterval);
+      clearInterval(progressInterval);
+      setProgress(95);
 
-        // Auto-continue if code seems incomplete
-        if(buffer.length>100&&!/[}\);>\]]$/.test(buffer.trim())){
-          showToast("Continuing generation...","info");
-          
-          const contResponse=await generateWithAI(
-            systemPrompt,
-            "Continue the code exactly where you stopped. Complete it fully.",
-            true
-          );
+      buffer=aiResponse.code;
+      const cleaned=cleanCode(buffer);
+      editorRef.current.setValue(cleaned);
 
-          if(contResponse.isHuggingFace){
-            buffer+=contResponse.code;
-          }else{
-            for await(const part of contResponse){
-              buffer+=part?.text||"";
-              const cleaned=cleanCode(buffer);
-              editorRef.current.setValue(cleaned);
-            }
-          }
-        }
-      }
-
-      const final=cleanCode(buffer);
+      const final=cleaned;
       const lang=detectLanguage(final);
       monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),lang);
 
@@ -512,7 +446,8 @@ function App(){
         language:lang,
         prompt:prompt,
         createdAt:new Date().toISOString(),
-        size:final.length
+        size:final.length,
+        model:aiResponse.model
       };
 
       setFiles(prev=>[newFile,...prev]);
@@ -523,7 +458,7 @@ function App(){
       setCredits(newCredits);
       
       setProgress(100);
-      showToast(`File "${finalFilename}" created! Used ${totalCost} credits.`,"success");
+      showToast(`✨ File "${finalFilename}" created! Used ${totalCost} credits.`,"success");
       setPrompt("");
       setFilename("");
 
@@ -645,32 +580,24 @@ function App(){
 
     try{
       const progressInterval=setInterval(()=>{
-        setProgress(p=>Math.min(p+2,95));
-      },100);
+        setProgress(p=>Math.min(p+2,90));
+      },150);
 
       const context=buffer.slice(-800);
       
       const aiResponse=await generateWithAI(
         systemPrompt,
-        `Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.`,
-        true
+        `Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.`
       );
 
-      if(aiResponse.isHuggingFace){
-        buffer+=aiResponse.code;
-        const cleaned=cleanCode(buffer);
-        editorRef.current.setValue(cleaned);
-      }else{
-        for await(const part of aiResponse){
-          buffer+=part?.text||"";
-          const cleaned=cleanCode(buffer);
-          editorRef.current.setValue(cleaned);
-        }
-      }
-
       clearInterval(progressInterval);
+      setProgress(95);
 
-      const final=cleanCode(buffer);
+      buffer+=aiResponse.code;
+      const cleaned=cleanCode(buffer);
+      editorRef.current.setValue(cleaned);
+
+      const final=cleaned;
       const updatedFile={...activeFile,content:final,size:final.length};
       setFiles(prev=>prev.map(f=>f.id===activeFile.id?updatedFile:f));
 
@@ -691,22 +618,6 @@ function App(){
   function resetCredits(){
     setCredits(1000);
     showToast("Credits reset to 1000","success");
-  }
-
-  async function handleSignIn(){
-    try{
-      const isSignedIn=await puter.auth.isSignedIn();
-      if(isSignedIn){
-        await puter.auth.signOut();
-        showToast('Signed out successfully','info');
-      }else{
-        await puter.auth.signIn();
-        showToast('Signed in successfully! Files will now sync to cloud.','success');
-      }
-      lucide.createIcons();
-    }catch(e){
-      showToast('Authentication error: '+e.message,'error');
-    }
   }
 
   function clearAllFiles(){
@@ -743,9 +654,6 @@ function App(){
           </div>
           <button className="icon-btn" onClick={resetCredits} title="Reset Credits">
             <i data-lucide="refresh-cw"></i>
-          </button>
-          <button className="icon-btn" onClick={handleSignIn} title="Sign In / Cloud Sync">
-            <i data-lucide={puter.auth.isSignedIn?"log-out":"log-in"}></i>
           </button>
         </div>
       </header>
@@ -810,8 +718,8 @@ function App(){
                 <i data-lucide="message-square"></i>
                 What would you like to build?
                 <span style={{marginLeft:"auto",fontSize:"0.75rem",background:"rgba(110,243,197,.15)",padding:"4px 10px",borderRadius:"6px",color:"#6ef3c5",display:"flex",alignItems:"center",gap:"4px"}}>
-                  <i data-lucide="shield-check" style={{width:"14px",height:"14px"}}></i>
-                  Quality Mode
+                  <i data-lucide="cpu" style={{width:"14px",height:"14px"}}></i>
+                  DeepSeek Coder
                 </span>
               </div>
               <textarea 
@@ -909,8 +817,8 @@ function App(){
                 <span>Credits Used: <span className="stat-value">{maxCredits-credits}</span></span>
               </div>
               <div className="stat-item" style={{color:"#6ef3c5"}}>
-                <i data-lucide="shield-check"></i>
-                <span>Quality: <span className="stat-value">Premium</span></span>
+                <i data-lucide="cpu"></i>
+                <span>AI: <span className="stat-value">DeepSeek V2</span></span>
               </div>
             </div>
           </div>
