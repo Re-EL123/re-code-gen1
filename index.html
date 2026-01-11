@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -187,7 +185,6 @@ function cleanCode(raw){
   return raw
     .replace(/```[\s\S]*?```/g,m=>m.replace(/```[\w]*\n?|```/g,""))
     .replace(/```/g,"")
-    // Remove AI explanations that leak into code
     .replace(/I don't see any previous code.*$/s,'')
     .replace(/Could you please share.*$/s,'')
     .replace(/I'll continue.*$/s,'')
@@ -219,7 +216,6 @@ function generateSmartFilename(prompt,code,lang){
   };
   const ext=extensions[lang]||"txt";
   
-  // Extract class/function names
   let name=mainKeyword;
   if(lang==="javascript"||lang==="typescript"){
     const match=code.match(/(?:class|function|const)\s+(\w+)/);
@@ -240,7 +236,6 @@ function estimateTokens(text){
 }
 
 function estimateCost(tokens){
-  // More generous: ~50 tokens per credit (200 chars per credit)
   return Math.ceil(tokens/50);
 }
 
@@ -329,6 +324,67 @@ function App(){
   const creditPercent=(credits/maxCredits)*100;
   const creditStatus=creditPercent<=10?"danger":creditPercent<=30?"warning":"normal";
 
+  // ✅ NEW: AI Generation with HuggingFace Fallback
+  async function generateWithAI(systemPrompt,userPrompt,isStreaming=true){
+    try{
+      // Try Puter.js (Primary - Claude Sonnet 4)
+      if(!await puter.auth.isSignedIn()){
+        await puter.auth.signIn({attempt_temp_user_creation:true});
+      }
+
+      const messages=[
+        {role:"system",content:systemPrompt},
+        {role:"user",content:userPrompt}
+      ];
+
+      if(isStreaming){
+        return await puter.ai.chat(messages,{
+          model:"claude-sonnet-4-20250514",
+          stream:true
+        });
+      }else{
+        const response=await puter.ai.chat(messages,{
+          model:"claude-sonnet-4-20250514",
+          stream:false
+        });
+        return response;
+      }
+    }catch(puterError){
+      console.warn('Puter.js failed, switching to HuggingFace fallback...',puterError);
+      showToast('Primary AI unavailable, using backup system...','warning');
+
+      // Fallback to HuggingFace
+      try{
+        const response=await fetch('/api/generate',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            prompt:`${systemPrompt}\n\nUser Request: ${userPrompt}`,
+            model:'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
+            maxTokens:4096
+          })
+        });
+
+        if(!response.ok){
+          const errorData=await response.json().catch(()=>({}));
+          throw new Error(errorData.error||`API Error: ${response.status}`);
+        }
+
+        const data=await response.json();
+        
+        // Convert HF response to stream-like format for consistency
+        return{
+          code:data.code,
+          isHuggingFace:true,
+          usage:data.usage
+        };
+      }catch(hfError){
+        console.error('HuggingFace fallback also failed:',hfError);
+        throw new Error('Both AI systems are currently unavailable. Please try again later.');
+      }
+    }
+  }
+
   async function generate(){
     if(!prompt.trim()){
       showToast("Please enter a prompt to generate code","warning");
@@ -373,7 +429,7 @@ function App(){
     setProgress(0);
      
     let buffer="";
-    const system=`You are an elite code generation expert. Generate production-ready, fully functional code with these requirements:
+    const systemPrompt=`You are an elite code generation expert. Generate production-ready, fully functional code with these requirements:
 - Write complete, working code with NO placeholders or TODOs
 - Include proper error handling and edge cases
 - Use best practices and clean code principles
@@ -388,52 +444,54 @@ function App(){
         setProgress(p=>Math.min(p+1,95));
       },100);
 
-      // Ensure user authentication for AI access
-if(!await puter.auth.isSignedIn()){
-await puter.auth.signIn({attempt_temp_user_creation:true});
-}
-      const res=await puter.ai.chat([
-        {role:"system",content:system},
-        {role:"user",content:prompt}
-      ],{model:"claude-sonnet-4-20250514",stream:true});
+      const aiResponse=await generateWithAI(systemPrompt,prompt,true);
 
-      let chunkCount=0;
-      for await(const part of res){
-        const text=part?.text||"";
-        buffer+=text;
-        chunkCount++;
-        
+      // ✅ Handle HuggingFace non-streaming response
+      if(aiResponse.isHuggingFace){
+        buffer=aiResponse.code;
         const cleaned=cleanCode(buffer);
         editorRef.current.setValue(cleaned);
-
-        if(chunkCount%10===0){
-          const currentCost=Math.ceil(cleaned.length/200); // More generous
-          if(credits-currentCost<=0){
-            showToast("Credits exhausted during generation!","warning");
-            break;
-          }
-        }
-      }
-
-      clearInterval(progressInterval);
-
-      // Auto-continue if code seems incomplete
-      if(buffer.length>100&&!/[}\);>\]]$/.test(buffer.trim())){
-        showToast("Continuing generation...","info");
-        
-        const cont=await puter.ai.chat([
-          {role:"system",content:system},
-          {role:"user",content:"Continue the code exactly where you stopped. Complete it fully."}
-        ],{model:"claude-sonnet-4-20250514",stream:true});
-        // Ensure authentication before continuing
-if(!await puter.auth.isSignedIn()){
-await puter.auth.signIn({attempt_temp_user_creation:true});
-}
-
-        for await(const part of cont){
-          buffer+=part?.text||"";
+        clearInterval(progressInterval);
+      }else{
+        // ✅ Handle Puter streaming response
+        let chunkCount=0;
+        for await(const part of aiResponse){
+          const text=part?.text||"";
+          buffer+=text;
+          chunkCount++;
+          
           const cleaned=cleanCode(buffer);
           editorRef.current.setValue(cleaned);
+
+          if(chunkCount%10===0){
+            const currentCost=Math.ceil(cleaned.length/200);
+            if(credits-currentCost<=0){
+              showToast("Credits exhausted during generation!","warning");
+              break;
+            }
+          }
+        }
+        clearInterval(progressInterval);
+
+        // Auto-continue if code seems incomplete
+        if(buffer.length>100&&!/[}\);>\]]$/.test(buffer.trim())){
+          showToast("Continuing generation...","info");
+          
+          const contResponse=await generateWithAI(
+            systemPrompt,
+            "Continue the code exactly where you stopped. Complete it fully.",
+            true
+          );
+
+          if(contResponse.isHuggingFace){
+            buffer+=contResponse.code;
+          }else{
+            for await(const part of contResponse){
+              buffer+=part?.text||"";
+              const cleaned=cleanCode(buffer);
+              editorRef.current.setValue(cleaned);
+            }
+          }
         }
       }
 
@@ -441,14 +499,12 @@ await puter.auth.signIn({attempt_temp_user_creation:true});
       const lang=detectLanguage(final);
       monacoRef.current.editor.setModelLanguage(editorRef.current.getModel(),lang);
 
-      // Auto-generate filename if not provided
       let finalFilename=filename.trim();
       if(!finalFilename){
         finalFilename=generateSmartFilename(prompt,final,lang);
         setFilename(finalFilename);
       }
 
-      // Create new file
       const newFile={
         id:Date.now().toString(),
         name:finalFilename,
@@ -578,7 +634,7 @@ await puter.auth.signIn({attempt_temp_user_creation:true});
     showToast("Continuing code generation...","info");
 
     let buffer=activeFile.content;
-    const system=`You are an elite code generation expert. Continue the code with these quality standards:
+    const systemPrompt=`You are an elite code generation expert. Continue the code with these quality standards:
 - Write complete, working code with NO placeholders
 - Maintain the existing code style and patterns
 - Include proper error handling
@@ -592,22 +648,24 @@ await puter.auth.signIn({attempt_temp_user_creation:true});
         setProgress(p=>Math.min(p+2,95));
       },100);
 
-      // Get last 800 chars for context
       const context=buffer.slice(-800);
       
-      const cont=await puter.ai.chat([
-        {role:"system",content:system},
-        {role:"user",content:`Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.`}
-      ],{model:"claude-sonnet-4-20250514",stream:true});
-      // Ensure authentication for active file continuation
-if(!await puter.auth.isSignedIn()){
-await puter.auth.signIn({attempt_temp_user_creation:true});
-}
+      const aiResponse=await generateWithAI(
+        systemPrompt,
+        `Continue this code EXACTLY where it stops:\n\n${context}\n\nComplete all open tags, functions, and statements.`,
+        true
+      );
 
-      for await(const part of cont){
-        buffer+=part?.text||"";
+      if(aiResponse.isHuggingFace){
+        buffer+=aiResponse.code;
         const cleaned=cleanCode(buffer);
         editorRef.current.setValue(cleaned);
+      }else{
+        for await(const part of aiResponse){
+          buffer+=part?.text||"";
+          const cleaned=cleanCode(buffer);
+          editorRef.current.setValue(cleaned);
+        }
       }
 
       clearInterval(progressInterval);
@@ -616,7 +674,7 @@ await puter.auth.signIn({attempt_temp_user_creation:true});
       const updatedFile={...activeFile,content:final,size:final.length};
       setFiles(prev=>prev.map(f=>f.id===activeFile.id?updatedFile:f));
 
-      const cost=Math.ceil((final.length-activeFile.size)/200); // More generous
+      const cost=Math.ceil((final.length-activeFile.size)/200);
       setCredits(prev=>Math.max(prev-cost,0));
 
       setProgress(100);
@@ -634,7 +692,8 @@ await puter.auth.signIn({attempt_temp_user_creation:true});
     setCredits(1000);
     showToast("Credits reset to 1000","success");
   }
-   async function handleSignIn(){
+
+  async function handleSignIn(){
     try{
       const isSignedIn=await puter.auth.isSignedIn();
       if(isSignedIn){
@@ -685,9 +744,9 @@ await puter.auth.signIn({attempt_temp_user_creation:true});
           <button className="icon-btn" onClick={resetCredits} title="Reset Credits">
             <i data-lucide="refresh-cw"></i>
           </button>
-           <button className="icon-btn" onClick={handleSignIn} title="Sign In / Cloud Sync">
-    <i data-lucide={puter.auth.isSignedIn() ? "log-out" : "log-in"}></i>
-    </button>
+          <button className="icon-btn" onClick={handleSignIn} title="Sign In / Cloud Sync">
+            <i data-lucide={puter.auth.isSignedIn?"log-out":"log-in"}></i>
+          </button>
         </div>
       </header>
 
