@@ -38,15 +38,7 @@ module.exports = async function handler(req, res) {
     const chatCompletion = await client.chat.completions.create({
       model: model,
       messages: [
-        { role: "system", content: "You are an elite code generation expert. Generate production-ready, fully functional code with these requirements:
-- Write complete, working code with NO placeholders or TODOs
-- Include proper error handling and edge cases
-- Use best practices and clean code principles
-- Add helpful comments for complex logic
-- Ensure code is optimized and efficient
-- Make it maintainable and scalable
-- Return ONLY code - no markdown, no explanations, no text outside code
-- Complete all functions, classes, and statements fully" },
+        { role: "system", content: "You are an elite code generation expert. Generate production-ready, fully functional code" },
         { role: "user", content: prompt }
       ],
       max_tokens: maxTokens,
