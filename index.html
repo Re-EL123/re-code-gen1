@@ -163,6 +163,11 @@ button span{z-index:1}
 <script type="text/babel">
 const {useState,useEffect,useRef}=React;
 
+  // At the top of your script, add this helper
+const API_URL = window.location.hostname === 'localhost' || window.location.protocol === 'file:'
+  ? 'https://re-code-gen1.vercel.app/api/generate'  // Your Vercel URL
+  : '/api/generate';  // Relative path when on Vercel
+
 // Storage Manager
 const storage={
   data:{files:[],credits:1000,activeFileId:null},
@@ -321,15 +326,15 @@ function App(){
   // ✅ HuggingFace AI Generation (Primary and Only)
   async function generateWithAI(systemPrompt,userPrompt){
     try{
-      const response=await fetch('https://re-code-gen1.vercel.app/api/generate',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          prompt:`${systemPrompt}\n\nUser Request: ${userPrompt}`,
-          model:'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
-          maxTokens:4096
-        })
-      });
+      const response = await fetch(API_URL, {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({
+    prompt: `${systemPrompt}\n\nUser Request: ${userPrompt}`,
+    model: 'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
+    maxTokens: 4096
+  })
+});
 
       if(!response.ok){
         const errorData=await response.json().catch(()=>({}));
