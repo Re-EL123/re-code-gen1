@@ -38,7 +38,7 @@ export default async function handler(req, res) {
 
     // Call HuggingFace Inference API
     const response = await fetch(
-      `https://api-inference.huggingface.co/models/${model}`,
+      `https://router.huggingface.co/models/${model}`,
       {
         method: 'POST',
         headers: {
