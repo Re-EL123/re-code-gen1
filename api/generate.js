@@ -1,6 +1,8 @@
+import { OpenAI } from "openai";
+
 /**
- * HuggingFace DeepSeek-Coder-V2-Lite API Proxy
- * Vercel Serverless Function - Enhanced Version
+ * HuggingFace DeepSeek API via OpenAI-compatible endpoint
+ * Vercel Serverless Function
  */
 export default async function handler(req, res) {
   // Enable CORS
@@ -17,7 +19,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { prompt, model = 'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct', maxTokens = 4096 } = req.body;
+    const { prompt, maxTokens = 4096 } = req.body;
     
     if (!prompt) {
       return res.status(400).json({ error: 'prompt is required' });
@@ -34,106 +36,65 @@ export default async function handler(req, res) {
       });
     }
 
-  console.log('Making request to HuggingFace API...');
+    console.log('Initializing OpenAI client for HuggingFace...');
 
-// Call HuggingFace Inference API (NEW ENDPOINT)
-const response = await fetch(
-  `https://router.huggingface.co/hf-inference/models/${model}`,
-  {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${hfToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: maxTokens,
-        temperature: 0.7,
-        top_p: 0.95,
-        return_full_text: false
-      }
-    })
-  }
-);
+    // Initialize OpenAI client with HuggingFace endpoint
+    const client = new OpenAI({
+      baseURL: "https://router.huggingface.co/v1",
+      apiKey: hfToken,
+    });
 
+    console.log('Making request to HuggingFace API...');
 
-    console.log('HuggingFace Response Status:', response.status);
+    // Call the API
+    const chatCompletion = await client.chat.completions.create({
+      model: "deepseek-ai/DeepSeek-V3:free",
+      messages: [
+        {
+          role: "system",
+          content: "You are a helpful coding assistant. Generate clean, working code based on the user's request."
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      max_tokens: maxTokens,
+      temperature: 0.7,
+    });
 
-    // Handle errors
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData;
-      
-      try {
-        errorData = JSON.parse(errorText);
-      } catch {
-        errorData = { error: errorText };
-      }
+    console.log('HuggingFace Response received');
 
-      console.error('HuggingFace API Error:', errorData);
-      
-      if (response.status === 429) {
-        return res.status(429).json({ 
-          error: 'Rate limit exceeded. Please wait a moment and try again.' 
-        });
-      }
-      
-      if (response.status === 401 || response.status === 403) {
-        return res.status(401).json({ 
-          error: 'Invalid HF_TOKEN. Please check your token at https://huggingface.co/settings/tokens' 
-        });
-      }
-      
-      if (response.status === 503) {
-        return res.status(503).json({ 
-          error: 'Model is currently loading. Please try again in a moment.' 
-        });
-      }
-      
-      return res.status(response.status).json({ 
-        error: errorData.error || 'HuggingFace API error',
-        details: errorData
-      });
-    }
-
-    const data = await response.json();
-    console.log('HuggingFace Response Data:', JSON.stringify(data).substring(0, 200));
-
-    // Extract generated text from various response formats
-    let generatedCode;
-    
-    if (Array.isArray(data)) {
-      // Format: [{ generated_text: "..." }]
-      generatedCode = data[0]?.generated_text || '';
-    } else if (data.generated_text) {
-      // Format: { generated_text: "..." }
-      generatedCode = data.generated_text;
-    } else if (typeof data === 'string') {
-      // Format: "raw text"
-      generatedCode = data;
-    } else {
-      // Unknown format, return as JSON string
-      console.warn('Unexpected response format:', data);
-      generatedCode = JSON.stringify(data, null, 2);
-    }
+    const generatedCode = chatCompletion.choices[0].message.content;
 
     return res.status(200).json({
       code: generatedCode,
-      model: model,
-      usage: {
-        prompt_tokens: prompt.length / 4, // Rough estimate
-        completion_tokens: generatedCode.length / 4,
-        total_tokens: (prompt.length + generatedCode.length) / 4
-      }
+      model: chatCompletion.model,
+      usage: chatCompletion.usage
     });
 
   } catch (error) {
     console.error('Server Error:', error);
+    
+    // Handle specific OpenAI/HuggingFace errors
+    if (error.status === 401) {
+      return res.status(401).json({ 
+        error: 'Invalid HF_TOKEN',
+        help: 'Check your token at https://huggingface.co/settings/tokens'
+      });
+    }
+    
+    if (error.status === 429) {
+      return res.status(429).json({ 
+        error: 'Rate limit exceeded',
+        help: 'Please wait a moment and try again'
+      });
+    }
+
     return res.status(500).json({ 
       error: 'Internal server error',
       message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      details: error.response?.data || undefined
     });
   }
 }
