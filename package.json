@@ -1,7 +1,6 @@
 {
   "name": "re-code-gen1",
   "version": "1.0.0",
-  "type": "module",
   "dependencies": {
     "openai": "^4.77.3"
   }
