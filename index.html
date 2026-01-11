@@ -324,45 +324,49 @@ function App(){
   const creditStatus=creditPercent<=10?"danger":creditPercent<=30?"warning":"normal";
 
   // ✅ HuggingFace AI Generation (Primary and Only)
-  async function generateWithAI(systemPrompt,userPrompt){
-    try{
-      const response = await fetch(API_URL, {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  body: JSON.stringify({
-    prompt: `${systemPrompt}\n\nUser Request: ${userPrompt}`,
-    model: 'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
-    maxTokens: 4096
-  })
-});
+  async function generateWithAI(systemPrompt, userPrompt) {
+  try {
+    const response = await fetch('https://re-code-gen1.vercel.app/api/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        prompt: `${systemPrompt}\n\nUser Request: ${userPrompt}`,
+        model: 'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
+        maxTokens: 4096
+      })
+    });
 
-      if(!response.ok){
-        const errorData=await response.json().catch(()=>({}));
-        
-        if(response.status===429){
-          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
-        }
-        if(response.status===401){
-          throw new Error('Authentication failed. Please check API configuration.');
-        }
-        if(response.status===500){
-          throw new Error(errorData.error||'Server error. Please try again.');
-        }
-        
-        throw new Error(errorData.error||`API Error: ${response.status}`);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      
+      if (response.status === 429) {
+        throw new Error('Rate limit exceeded. Please wait a moment and try again.');
       }
-
-      const data=await response.json();
-      return {
-        code:data.code,
-        model:data.model,
-        usage:data.usage
-      };
-    }catch(error){
-      console.error('HuggingFace API error:',error);
-      throw error;
+      if (response.status === 401) {
+        throw new Error('Authentication failed. Please check API configuration.');
+      }
+      if (response.status === 500) {
+        throw new Error(errorData.error || 'Server error. Please try again.');
+      }
+      
+      throw new Error(errorData.error || `API Error: ${response.status}`);
     }
+
+    const data = await response.json();
+    return {
+      code: data.code,
+      model: data.model,
+      usage: data.usage
+    };
+  } catch (error) {
+    console.error('HuggingFace API error:', error);
+    throw error;
   }
+}
+
 
   async function generate(){
     if(!prompt.trim()){
