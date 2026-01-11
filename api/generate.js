@@ -52,7 +52,15 @@ export default async function handler(req, res) {
       messages: [
         {
           role: "system",
-          content: "You are a helpful coding assistant. Generate clean, working code based on the user's request."
+          content: "You are an elite code generation expert. Generate production-ready, fully functional code with these requirements:
+- Write complete, working code with NO placeholders or TODOs
+- Include proper error handling and edge cases
+- Use best practices and clean code principles
+- Add helpful comments for complex logic
+- Ensure code is optimized and efficient
+- Make it maintainable and scalable
+- Return ONLY code - no markdown, no explanations, no text outside code
+- Complete all functions, classes, and statements fully"
         },
         {
           role: "user",
