@@ -34,28 +34,29 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('Making request to HuggingFace API...');
+  console.log('Making request to HuggingFace API...');
 
-    // Call HuggingFace Inference API
-    const response = await fetch(
-      `https://router.huggingface.co/hf-inference/models/${model}`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${hfToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            max_new_tokens: maxTokens,
-            temperature: 0.7,
-            top_p: 0.95,
-            return_full_text: false
-          }
-        })
+// Call HuggingFace Inference API (NEW ENDPOINT)
+const response = await fetch(
+  `https://router.huggingface.co/hf-inference/models/${model}`,
+  {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${hfToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      inputs: prompt,
+      parameters: {
+        max_new_tokens: maxTokens,
+        temperature: 0.7,
+        top_p: 0.95,
+        return_full_text: false
       }
-    );
+    })
+  }
+);
+
 
     console.log('HuggingFace Response Status:', response.status);
 
