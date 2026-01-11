@@ -38,7 +38,7 @@ module.exports = async function handler(req, res) {
     const chatCompletion = await client.chat.completions.create({
       model: model,
       messages: [
-        { role: "system", content: "Generate complete, production-ready code with error handling and best practices. No placeholders." },
+        { role: "system", content: "Generate production-ready code: complete, no placeholders/TODOs, with error handling, best practices, and comments. Make it efficient and maintainable.Code only." },
         { role: "user", content: prompt }
       ],
       max_tokens: maxTokens,
