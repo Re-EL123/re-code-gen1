@@ -194,7 +194,7 @@ function cleanCode(raw){
 function detectLanguage(code){
   if(!code||code.length<10)return"plaintext";
   if(code.startsWith("<!DOCTYPE")||code.startsWith("<html")||/<html[\s>]/.test(code))return"html";
-  if(/import React|from ['"]react['"]|const.*=.*React/.test(code))return"javascript";
+  if(/import React|from ['\"]react['\"]|const.*=.*React/.test(code))return"javascript";
   if(/def\s+\w+\(|import\s+\w+|print\(/.test(code))return"python";
   if(/System\.out\.print|public\s+class|public\s+static\s+void/.test(code))return"java";
   if(/#include\s*<|using namespace|std::/.test(code))return"cpp";
@@ -326,7 +326,7 @@ function App(){
   // ✅ HuggingFace AI Generation (Primary and Only)
   async function generateWithAI(systemPrompt, userPrompt) {
   try {
-    const response = await fetch('https://re-code-gen1.vercel.app/api/generate', {
+    const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -334,7 +334,7 @@ function App(){
       },
       body: JSON.stringify({
         prompt: `${systemPrompt}\n\nUser Request: ${userPrompt}`,
-        model: 'deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct',
+        model: 'deepseek-ai/DeepSeek-V3',
         maxTokens: 4096
       })
     });
@@ -349,7 +349,7 @@ function App(){
         throw new Error('Authentication failed. Please check API configuration.');
       }
       if (response.status === 500) {
-        throw new Error(errorData.error || 'Server error. Please try again.');
+        throw new Error(errorData.message || errorData.error || 'Server error. Please try again.');
       }
       
       throw new Error(errorData.error || `API Error: ${response.status}`);
@@ -827,7 +827,7 @@ function App(){
               </div>
               <div className="stat-item" style={{color:"#6ef3c5"}}>
                 <i data-lucide="cpu"></i>
-                <span>AI: <span className="stat-value">DeepSeek V2</span></span>
+                <span>AI: <span className="stat-value">DeepSeek V3</span></span>
               </div>
             </div>
           </div>
