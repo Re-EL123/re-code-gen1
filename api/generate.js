@@ -14,7 +14,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const { prompt, model = 'deepseek-ai/DeepSeek-V3.2:novita', maxTokens = 4096 } = req.body;
+    const { prompt, model = 'deepseek-ai/DeepSeek-V3.2', maxTokens = 4096 } = req.body;
     
     if (!prompt) {
       return res.status(400).json({ error: 'prompt is required' });
